@@ -1,13 +1,9 @@
-# Sample Hardhat Project
+# Risk Adjusted Coin
 
-This project demonstrates a basic Hardhat use case. It comes with a sample contract, a test for that contract, and a Hardhat Ignition module that deploys that contract.
+It's exactly that -- a coin that holds a basket of assets, on a risk adjusted basis.
 
-Try running some of the following tasks:
+So the number should go up (or down) on a risk adjusted basis. 
 
-```shell
-npx hardhat help
-npx hardhat test
-REPORT_GAS=true npx hardhat test
-npx hardhat node
-npx hardhat ignition deploy ./ignition/modules/Lock.ts
-```
+More to come re. documentation and an FE soon.
+
+If you want to be involved in the dev, hmu @keroshanpillay on tg.
