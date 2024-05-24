@@ -10,7 +10,7 @@ import "../interfaces/uniswap-interfaces/IUniswapV3Pool.sol";
 
 contract RAC {
     address public constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
-    address public constant SWAP_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address public constant SWAP_ROUTER = 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B;
 
     mapping(address => address) public getAsset;
     address[] public allAssets;

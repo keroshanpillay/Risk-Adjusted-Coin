@@ -3,26 +3,24 @@ pragma solidity ^0.8.0;
 
 import "../interfaces/uniswap-interfaces/IUniswapV3Pool.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import '@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol';
 import '@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol';
+import "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3SwapCallback.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 
 import "../interfaces/IAsset.sol";
 
-contract Asset is IAsset {
+contract Asset is IAsset, IUniswapV3SwapCallback {
+
     bool initialized = false;
 
     ISwapRouter public swapRouter;
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public assetTokenAddress;
-    // For this example, we will set the pool fee to 0.3%.
-    uint24 public constant poolFee = 3000;
-    // address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
-
+    
     //vars
     address public uniV3PoolAddress;
     int56[7] public priceHistory;
-
     int256 public mostRecentSharpe;
     uint256 public mostRecentSTD;
     int256 public mostRecentReturn;
@@ -32,42 +30,35 @@ contract Asset is IAsset {
     constructor() {}
 
     function initialize (address _uniV3PoolAddress, int56[7] memory _priceHistory, address _swapRouter) public {
+        
+        initialized = true;
+
         swapRouter = ISwapRouter(_swapRouter);
 
         uniV3PoolAddress = _uniV3PoolAddress;
-        assetTokenAddress = IUniswapV3Pool(uniV3PoolAddress).token0();
+
+        if (IUniswapV3Pool(uniV3PoolAddress).token1() == USDC) {
+            assetTokenAddress = IUniswapV3Pool(uniV3PoolAddress).token0();
+        } else {
+            assetTokenAddress = IUniswapV3Pool(uniV3PoolAddress).token1();
+        }
 
         priceHistory = _priceHistory;
         mostRecentPriceUpdateTime = block.timestamp;
         updateSharpe();
 
-        initialized = true;
-
         require(IUniswapV3Pool(uniV3PoolAddress).token1() == USDC, "Pool must have USDC as token1");
     }
 
     // Functions
+    /// @notice Writes the most recent price to the price history array and updates the Sharpe ratio
+    /// @dev This function can only be called once per day
     function writeMostRecentPrice() public {
         // Ensure the function can only be called once per day
         require(block.timestamp - mostRecentPriceUpdateTime > 86400, "Price can only be updated once a day");
 
-        // Instantiate the Uniswap pool interface
-        IUniswapV3Pool uniV3Pool = IUniswapV3Pool(uniV3PoolAddress);
-
-        // Prepare the time points for observation (1 hour ago and now)
-        uint32[] memory secondAgos = new uint32[](2);
-        secondAgos[0] = 3600; // 1 hour ago
-        secondAgos[1] = 0;    // Now
-
-        // Observe price data from Uniswap pool
-        (int56[] memory tickCumulatives, ) = uniV3Pool.observe(secondAgos);
-
-        // Ensure the observation data is valid
-        require(tickCumulatives.length == 2, "Invalid observation data");
-
-        // Calculate the average tick over the period
-        int56 tickDifference = tickCumulatives[1] - tickCumulatives[0];
-        int56 averageTick = tickDifference / 3600; // Average tick per second over the hour
+        // Calculate the average tick over the last hour
+        int56 averageTick = getPrice();
 
         // Shift the price history array to the left
         for (uint256 i = 0; i < priceHistory.length - 1; i++) {
@@ -84,6 +75,8 @@ contract Asset is IAsset {
         updateSharpe();
     }
 
+    /// @notice Updates the Sharpe ratio based on the price history
+    /// @dev The Sharpe ratio is calculated using the daily returns of the asset and a daily risk-free rate
     function updateSharpe() public {
         // require(initialized, "Contract not initialized");
 
@@ -116,7 +109,7 @@ contract Asset is IAsset {
             sumSquaredDifferences += uint256(diff * diff);
         }
         uint256 variance = sumSquaredDifferences / 6;
-        uint256 standardDeviation = sqrt(variance);
+        uint256 standardDeviation = Math.sqrt(variance);
 
         // Calculate the Sharpe ratio
         int256 sharpe;
@@ -132,27 +125,13 @@ contract Asset is IAsset {
         mostRecentReturn = meanExcessReturn;
     }
 
-    // Babylonian method for square root
-    function sqrt(uint y) internal pure returns (uint z) {
-        if (y > 3) {
-            z = y;
-            uint x = y / 2 + 1;
-            while (x < z) {
-                z = x;
-                x = (y / x + x) / 2;
-            }
-        } else if (y != 0) {
-            z = 1;
-        }
-    }
-
 
     /// @notice swapExactInputSingle swaps a fixed amount of TOKEN_IN for a maximum possible amount of TOKEN_OUT
     /// using the USDC/Asset 0.3% pool by calling `exactInputSingle` in the swap router.
     /// @dev The calling address must approve this contract to spend at least `amountIn` worth of its USDC for this function to succeed.
     /// @param amountIn The exact amount of USDC that will be swapped for Asset.
     /// @return amountOut The amount of Asset received.
-    function swap(uint256 amountIn, bool usingUSDC) external returns (uint256 amountOut) {
+    function swap(uint256 amountIn, bool usingUSDC) external returns (uint256 amountOut){
 
         address TOKEN_IN;
         address TOKEN_OUT;
@@ -166,35 +145,28 @@ contract Asset is IAsset {
         }
 
         // msg.sender must approve this contract
+        require(IERC20(TOKEN_IN).allowance(msg.sender, address(this)) >= amountIn, "Insufficient allowance");
 
         // Transfer the specified amount of TOKEN_IN to this contract.
         TransferHelper.safeTransferFrom(TOKEN_IN, msg.sender, address(this), amountIn);
 
-        // Approve the router to spend TOKEN_IN.
-        TransferHelper.safeApprove(TOKEN_IN, address(swapRouter), amountIn);
+        TransferHelper.safeApprove(TOKEN_IN, address(uniV3PoolAddress), amountIn);
 
-        // Naively set amountOutMinimum to 0. In production, use an oracle or other data source to choose a safer value for amountOutMinimum.
-        // We also set the sqrtPriceLimitx96 to be 0 to ensure we swap our exact input amount.
-        ISwapRouter.ExactInputSingleParams memory params =
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: TOKEN_IN,
-                tokenOut: TOKEN_OUT,
-                fee: poolFee,
-                recipient: msg.sender,
-                deadline: block.timestamp,
-                amountIn: amountIn,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            });
+        IUniswapV3Pool pool = IUniswapV3Pool(uniV3PoolAddress);
+        address recipient = msg.sender;
+        bool zeroForOne = !usingUSDC;
+        int256 amountSpecified = int256(amountIn);
+        int56 averageTick = getPrice();
+        uint160 sqrtPriceLimitX96 = uint160(Math.sqrt(uint256(int256(averageTick))) * 2**96);
 
-        // The call to `exactInputSingle` executes the swap.
-        amountOut = swapRouter.exactInputSingle(params);
+        pool.swap(recipient, zeroForOne, amountSpecified, sqrtPriceLimitX96, abi.encode(0));
     }
 
-    // Getters
-    function getUniPoolInfo() public view returns (int56, address, address, address, uint24, int24, uint128) {
+    /// @notice returns the avg tick over the last hour, always in USD
+    /// @dev Conversion to USD is done via the token1IsUSDC bool
+    function getPrice() public view returns (int56) {
+        //Instantiate the pool
         IUniswapV3Pool uniV3Pool = IUniswapV3Pool(uniV3PoolAddress);
-
 
         // Prepare the time points for observation (1 hour ago and now)
         uint32[] memory secondAgos = new uint32[](2);
@@ -211,7 +183,31 @@ contract Asset is IAsset {
         int56 tickDifference = (tickCumulatives[1]) - (tickCumulatives[0]);
         int56 averageTick = (tickDifference) / 3600; // Average tick per second over the hour
 
+        return averageTick;
+    }
+
+    // Getters
+    function getUniPoolInfo() public view returns (int56, address, address, address, uint24, int24, uint128) {
+        IUniswapV3Pool uniV3Pool = IUniswapV3Pool(uniV3PoolAddress);
+
+        int56 averageTick = getPrice();
+
         return (averageTick, uniV3Pool.factory(), uniV3Pool.token0(), uniV3Pool.token1(), uniV3Pool.fee(), uniV3Pool.tickSpacing(), uniV3Pool.maxLiquidityPerTick());
+    }
+
+    function uniswapV3SwapCallback(
+        int256 amount0Delta,
+        int256 amount1Delta,
+        bytes calldata data
+    ) external override {
+        // Ensure the callback is coming from the correct pool
+        require(msg.sender == uniV3PoolAddress, "Unauthorized callback");
+        // Handle the swap amounts
+        if (amount0Delta > 0) {
+            IERC20(IUniswapV3Pool(uniV3PoolAddress).token0()).transfer(msg.sender, uint256(amount0Delta));
+        } else if (amount1Delta > 0) {
+            IERC20(IUniswapV3Pool(uniV3PoolAddress).token1()).transfer(msg.sender, uint256(amount1Delta));
+        }
     }
 
 }
