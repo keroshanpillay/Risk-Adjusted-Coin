@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 import './Asset.sol';
@@ -5,8 +6,6 @@ import '../interfaces/IAsset.sol';
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-import "../interfaces/uniswap-interfaces/IUniswapV3Pool.sol";
 
 contract RAC is ERC20 {
     address public constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
@@ -30,14 +29,12 @@ contract RAC is ERC20 {
         lastInfoUpdateTime = 0;
     }
 
-
-
     /// @notice Mints RAC tokens with USD
     /// @param amountUSD The amount of USD to mint RAC with
     /// @dev USDC is always the input token -- you need USDC
     function mintWithUSD (uint256 amountUSD) external returns (uint256 amountRAC) {
         //caller needs to have approved the contract to spend their USDC
-        require(IERC20(USDC).allowance(msg.sender, address(this)) >= amountUSD, "USDC allowance not set");
+        require(IERC20(USDC).allowance(msg.sender, address(this)) >= amountUSD, "MINT:ALLOW");
 
         //transfer the USDC from the sender to the contract
         IERC20(USDC).transferFrom(msg.sender, address(this), amountUSD);
@@ -64,7 +61,7 @@ contract RAC is ERC20 {
         }
 
         //the remainder of USDC should be the weight of USDC
-        require(amountUSDLeft == (amountUSD * weights[0]) / 1e18, "Mint: Inconsistent USDC Amount");
+        require(amountUSDLeft == (amountUSD * weights[0]) / 1e18, "MINT:USDC");
 
         return amountUSD;
     }
@@ -77,15 +74,13 @@ contract RAC is ERC20 {
         for (uint i = 0; i < allAssets.length; i++) {
             //safety checks
             if (i == 0) {
-                require(Asset(allAssets[0]).assetTokenAddress() == USDC, "Treasury update: USDC not first asset");
-                require(IERC20(Asset(allAssets[0]).assetTokenAddress()).balanceOf(address(this)) == amountOfAssetHeld[0], "Treasury update: Inconsistent balances");
+                require(Asset(allAssets[0]).assetTokenAddress() == USDC, "T_UP:USDC");
+                require(IERC20(Asset(allAssets[0]).assetTokenAddress()).balanceOf(address(this)) == amountOfAssetHeld[0], "T_UP:BALANCE");
             }
 
             treasuryValueUSD += uint256(int256(Asset(allAssets[i]).getPrice()))*amountOfAssetHeld[i];
         }
     }
-
-
 
     event AssetCreated(address _uniV3PoolAddress, uint _assetIndex);
 
@@ -100,8 +95,10 @@ contract RAC is ERC20 {
         }
     }
 
+    /// @notice Converts the sharpe ratios to weights -- the weights are scaled by 1e18
+    /// @dev whenever using the weights, critical to divide by 1e18
     function sharpesToWeights() private {
-        require(weights.length == sharpeRatios.length + 1, "Weights array must be 1 longer than sharpeRatios array");
+        require(weights.length == sharpeRatios.length + 1, "S2W:LENGTH");
 
         int256 totalSharpe = 0;
         for (uint i = 0; i < sharpeRatios.length; i++) {
@@ -110,6 +107,7 @@ contract RAC is ERC20 {
             totalSharpe += curr_sharpe;
         }
 
+        //calculate the weights
         for (uint i = 0; i < sharpeRatios.length; i++) {
             if (sharpeRatios[i] < 0) {
                 weights[0] += uint((-sharpeRatios[i]*1e18) / totalSharpe);
@@ -120,7 +118,7 @@ contract RAC is ERC20 {
 
     function dailyPullForAllAssets () external {
         //this can only happen once a day
-        require(block.timestamp - lastInfoUpdateTime > 86400, "Price can only be updated once a day");
+        require(block.timestamp - lastInfoUpdateTime > 86400, "DPULL:TIME");
 
         for (uint i = 0; i < allAssets.length; i++) {
             Asset(allAssets[i]).writeMostRecentPrice();
@@ -140,11 +138,11 @@ contract RAC is ERC20 {
             lastInfoUpdateTime = block.timestamp;
         } else {
             //you can only add a new asset within 10 minutes of the most recent asset addition
-            require(block.timestamp - lastInfoUpdateTime < 600, "10min time constraint between asset additions and data pulls");
+            require(block.timestamp - lastInfoUpdateTime < 600, "ADDASSET:TIME");
         }
 
         //can't have the same asset
-        require(getAsset[_uniV3PoolAddress] == address(0), 'ASSET_EXISTS');
+        require(getAsset[_uniV3PoolAddress] == address(0), 'ADDASSET:DUP');
 
         //create2 it
         bytes memory bytecode = type(Asset).creationCode;
@@ -164,7 +162,7 @@ contract RAC is ERC20 {
 
     function rebalance() external {
         //time requirement
-        require(block.timestamp - lastRebalanceTime > 7*86400, "Rebalance can only happen once a week");
+        require(block.timestamp - lastRebalanceTime > 7*86400, "REBAL:TIME");
         // require(block.timestamp - lastInfoUpdateTime < 600, "10min time constraint between rebalances and data pulls");
     
         //sell all the assets for usdc
