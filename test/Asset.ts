@@ -31,7 +31,7 @@ describe("Asset", function () {
     const publicClient = await hre.viem.getPublicClient();
 
     //initialize the asset
-    await asset.write.initialize([uniV3PoolAddress, priceArrayUSDC, swapRouterAddress]);
+    await asset.write.initialize([uniV3PoolAddress, priceArrayUSDC]);
 
     const mostRecentSharpe = await asset.read.mostRecentSharpe();
     console.log("Most recent Sharpe ratio: ")

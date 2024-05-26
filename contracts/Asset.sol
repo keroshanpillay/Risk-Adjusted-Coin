@@ -14,7 +14,6 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
 
     bool initialized = false;
 
-    ISwapRouter public swapRouter;
     address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address public assetTokenAddress;
     
@@ -35,10 +34,8 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
         _;
     }
 
-    function initialize (address _uniV3PoolAddress, int56[7] memory _priceHistory, address _swapRouter) public {
+    function initialize (address _uniV3PoolAddress, int56[7] memory _priceHistory) public {
         initialized = true;
-
-        swapRouter = ISwapRouter(_swapRouter);
 
         uniV3PoolAddress = _uniV3PoolAddress;
 
@@ -149,6 +146,8 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
             TOKEN_OUT = USDC;
         }
 
+        uint256 balanceBefore = IERC20(TOKEN_OUT).balanceOf(address(this));
+
         // msg.sender must approve this contract
         require(IERC20(TOKEN_IN).allowance(msg.sender, address(this)) >= amountIn, "Insufficient allowance");
 
@@ -165,6 +164,10 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
         uint160 sqrtPriceLimitX96 = uint160(Math.sqrt(uint256(int256(averageTick))) * 2**96);
 
         pool.swap(recipient, zeroForOne, amountSpecified, sqrtPriceLimitX96, abi.encode(0));
+
+        uint256 balanceAfter = IERC20(TOKEN_OUT).balanceOf(address(this));
+
+        amountOut = balanceAfter - balanceBefore;
     }
 
     /// @notice returns the avg tick over the last hour, always in USD
@@ -213,6 +216,8 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
         } else if (amount1Delta > 0) {
             IERC20(IUniswapV3Pool(uniV3PoolAddress).token1()).transfer(msg.sender, uint256(amount1Delta));
         }
+        //throw away the data
+        data;
     }
 
 }
