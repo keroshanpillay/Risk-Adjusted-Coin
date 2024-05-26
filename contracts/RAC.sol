@@ -8,7 +8,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "../interfaces/uniswap-interfaces/IUniswapV3Pool.sol";
 
-contract RAC {
+contract RAC is ERC20 {
     address public constant USDC = 0xaf88d065e77c8cC2239327C5EDb3A432268e5831;
     address public constant SWAP_ROUTER = 0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B;
 
@@ -17,14 +17,75 @@ contract RAC {
 
     int256[] public sharpeRatios;
     uint[] public weights;
+    uint256[] amountOfAssetHeld;
 
     uint public lastInfoUpdateTime;
     uint public lastRebalanceTime;
 
-    constructor() {
+    uint256 public treasuryValueUSD;
+    uint256[] public mostRecentAssetPrices;
+
+    constructor() ERC20("RAC", "RAC") {
         weights = new uint[](1);
         lastInfoUpdateTime = 0;
     }
+
+
+
+    /// @notice Mints RAC tokens with USD
+    /// @param amountUSD The amount of USD to mint RAC with
+    /// @dev USDC is always the input token -- you need USDC
+    function mintWithUSD (uint256 amountUSD) external returns (uint256 amountRAC) {
+        //caller needs to have approved the contract to spend their USDC
+        require(IERC20(USDC).allowance(msg.sender, address(this)) >= amountUSD, "USDC allowance not set");
+
+        //transfer the USDC from the sender to the contract
+        IERC20(USDC).transferFrom(msg.sender, address(this), amountUSD);
+
+        //calculate the amount of RAC to mint
+        getMostRecentTreasuryValue();
+        amountRAC = amountUSD * totalSupply() / treasuryValueUSD;
+
+        //mint the RAC tokens
+        _mint(msg.sender, amountRAC);
+
+        uint256 amountUSDLeft = amountUSD;
+
+        //buy the assets with the USDC
+        for (uint i = 0; i < allAssets.length; i++) {
+            //approve the asset to spend the usdc
+            IERC20(USDC).approve(allAssets[i], (amountUSD * weights[i+1]) / 1e18);
+            //swap the usdc for the asset
+            Asset(allAssets[i]).swap((amountUSD * weights[i+1]) / 1e18, true);
+            //update the amount of the asset held
+            amountOfAssetHeld[i] = IERC20(Asset(allAssets[i]).assetTokenAddress()).balanceOf(address(this));
+            //update the amount of usdc left
+            amountUSDLeft -= (amountUSD * weights[i+1]) / 1e18;
+        }
+
+        //the remainder of USDC should be the weight of USDC
+        require(amountUSDLeft == (amountUSD * weights[0]) / 1e18, "Mint: Inconsistent USDC Amount");
+
+        return amountUSD;
+    }
+
+    ///@notice updates the value of the treasury
+    function getMostRecentTreasuryValue() private {
+        treasuryValueUSD = 0;
+
+        //calculate the most recent prices of all our assets 
+        for (uint i = 0; i < allAssets.length; i++) {
+            //safety checks
+            if (i == 0) {
+                require(Asset(allAssets[0]).assetTokenAddress() == USDC, "Treasury update: USDC not first asset");
+                require(IERC20(Asset(allAssets[0]).assetTokenAddress()).balanceOf(address(this)) == amountOfAssetHeld[0], "Treasury update: Inconsistent balances");
+            }
+
+            treasuryValueUSD += uint256(int256(Asset(allAssets[i]).getPrice()))*amountOfAssetHeld[i];
+        }
+    }
+
+
 
     event AssetCreated(address _uniV3PoolAddress, uint _assetIndex);
 
@@ -48,11 +109,12 @@ contract RAC {
             curr_sharpe >= 0 ? curr_sharpe : -curr_sharpe; // absolute value
             totalSharpe += curr_sharpe;
         }
+
         for (uint i = 0; i < sharpeRatios.length; i++) {
             if (sharpeRatios[i] < 0) {
-                weights[0] += uint(-sharpeRatios[i] / totalSharpe);
+                weights[0] += uint((-sharpeRatios[i]*1e18) / totalSharpe);
             }
-            weights[i+1] = uint(sharpeRatios[i] / totalSharpe);
+            weights[i+1] = uint((sharpeRatios[i]*1e18) / totalSharpe);
         }
     }
 
@@ -118,7 +180,12 @@ contract RAC {
         //using the weights, buy the assets proportionally.
         //the first asset in the weights is always usdc, so we don't need to buy that
         for (uint i = 0; i < allAssets.length; i++) {
-            Asset(allAssets[i]).swap(totalUsdc * weights[i+1] / 100, true);
+            //approve the asset to spend the usdc
+            IERC20(USDC).approve(allAssets[i], (totalUsdc * weights[i+1]) / 1e18);
+            //swap the usdc for the asset
+            Asset(allAssets[i]).swap((totalUsdc * weights[i+1]) / 1e18, true);
+            //update the amount of the asset held
+            amountOfAssetHeld[i] = IERC20(Asset(allAssets[i]).assetTokenAddress()).balanceOf(address(this));
         }
 
         //update the updated time

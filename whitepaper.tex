@@ -1,0 +1,91 @@
+\documentclass[11pt]{article}
+\title{Risk-Adjusted-Coin}
+\author{Keroshan Pillay}
+
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+You are an investor and want to expose yourself to crypto-assets. To do this, you wish to hold a risk-adjusted basket of cryptos. To do this, you buy some \emph{Risk-Adjusted-Coin} (RAC, pronounced 'rack'). A rack holds a risk-adjusted basket of assets that updates itself periodically. Therefore, the price of RAC goes up (or down) in a risk adjusted manner. 
+
+This is a simple way to allow for crypto exposure, whilst accounting for risk. No work is required and the basket of assets rebalances automatically allowing you, the investor, to sleep peacefully. 
+
+\section{The Basket}
+
+
+The basket allocates assets based on the sharpe ratio of assets, given by:
+
+\begin{equation}
+	S = \frac{R_A-R_F}{\sigma_A}
+\end{equation}
+
+Out of the set of assets to consider, we weight the basket based on the relative sharpe ratios of the assets. For example, we choose the basket to be comprised of BTC, ETH and SOL and these have sharpe ratios of 0.5, 0.7, 0.2, respectively. Using these ratios, we get the weighting of the basket to be 35.7\% BTC\footnote{0.5/(0.5+0.7+0.2)}, 50\% ETH\footnote{0.7/(0.5+0.7+0.2)} and 14.3\% SOL\footnote{0.2/(0.5+0.7+0.2)}. Prices for assets are denominated in USD.
+
+\pagebreak
+
+To be rigorous, we have a set $T$ of $n$ assets, 
+
+\begin{equation}
+	T=\{A_1,A_2,...,A_n\}
+\end{equation}
+
+and these have sharpe ratios of 
+
+\begin{equation}
+	T_{sharpe} = \{S_1,S_2,..., S_n\}
+\end{equation}
+
+The weighting of any asset in the basket ($W_i$) is given by
+
+\begin{equation}
+W_i = \frac{S_i}{\Sigma T_{sharpe}}	
+\end{equation}
+
+The weights then comprise the allocation of the basket
+\begin{equation}
+	B = \{W_1,W_2,...,W_n\}
+\end{equation}
+
+\section{Allocation Mechanism}
+
+The basket always starts completely in USD and this makes things simpler. You simply buy asset $A_i$ using a fraction $W_i$ of your USD reserves. When rebalancing, sell the full basket to USD and then repeat the allocation using the new weights. 
+
+It is more efficient to not sell the entire basket but it significantly increases the complexity of the code; so it is not implemented in V1. However, the theory is clear. 
+
+You have your original weights $\{W_1,W_2,...,W_n\}$ and then compute the new weights $\{W_1',W_2',...,W_n'\}$. The amount to buy or sell of asset $A_i$ is given by $(basket\_value\_usd)(W_i'  - W_i)$. All the sales must happen, followed by the purchase to ensure that there is sufficient capital (USD) in the basket to purchase the assets, where an increase in allocation is necessary. 
+
+Again, theoretically feasible but technically complicated so it is omitted for now. 
+
+\section{Token}
+
+\subsection{Mint}
+
+To be cool, this must be a token and the number must go up (or down) in a risk-adjusted manner. To do this, we use the ERC20 standard.\footnote{1151 could be the move but I don't know it as well as 20}
+
+The first individual to mint RAC is the deployer. You must deploy the contract with \$1000 --i.e. a rack -- and this will mint 1000 RAC. This mint amount and ratio is (almost) arbitrary but it just makes sense for it to be \$1,000 because that's the social definition of a rack.\footnote{But you \emph{could} choose whatever you want} This sets the baseline price for RAC at 1:1 to the dollar. Future mints of RAC follow this formula:
+
+\begin{equation}
+tokens\_minted = \frac{(purchase\_amount\_usd)(supply)}{treasury}	
+\end{equation}
+
+If someone bought immediately after the deployment, they would also be minting at 1:1 to the dollar because the value of the treasury will be that of the time of the deployment. However, as time goes on, the net value of the treasury (the basket of risk-weighted assets) and thus the price of RAC will change. 
+
+Let's look at this example: someone wants to buy 1 week after deployment. At this point, the total treasury is worth \$1,100 -- no one else has minted so the treasury is just the value of the first \$1,000 mint but the basket has grown in value by 10\%;  so \$1,100. Person 2 would like to purchase \$100 worth of RAC, and we need to determine how much RAC they receive for this USD amount. Using equation (6), we find the answer to be $(\$100)(1000 $RAC$)/(\$1100) = 90.91 $RAC
+
+\subsection{Burn}
+
+You want to sell RAC and this means burning RAC. You bring your RAC to the app, burn it and then receive your investment in dollars. What this actually means is that you receive your share of the treasury. On a request to burn, the various assets in the treasury are sold to deliver your claim. Specifically, asset $A_i$ will be sold to the amount of $(sale\_amount)*W_i$. Here, $sale\_amount = (amt\_of\_rac /supply)*treasury$. 
+
+For example, you mint 1000 RAC for \$1,500 and there are currently 10k RAC circulating. By equation (6), this implies a treasury of \$15,000 and a price per coin of \$1.5. The basket of assets then grows from \$16,500 (including your mint) to \$30,000 – implying a price per coin of \$2.72. You now want to sell and this means burning the 1000 RAC you own. You expect (and will) get \$1,875 for the 1000 RAC you originally purchased.\footnote{30000*(1000/16000)} To deliver your \$1,875, the contract will sell the assets, $T$, at their proportional current weighting found in $B$. Thus, your RAC are backed by the value o
+
+Because of this burn mechanism, RAC is always redeemable for the actual value it represents. This means that the token will trade at the value it represents because of arbitrage. Instantly and infinitely redeemable, the market is incentivized to ensure RAC trades at the correct price. 
+
+This ensures coolness -- we need the token price to move up or down in a risk adjusted way.  
+
+
+
+
+\end{document}

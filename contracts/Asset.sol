@@ -29,8 +29,13 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
     //constructor
     constructor() {}
 
+    //modifiers
+    modifier onlyInitialized() {
+        require(initialized, "Contract not initialized");
+        _;
+    }
+
     function initialize (address _uniV3PoolAddress, int56[7] memory _priceHistory, address _swapRouter) public {
-        
         initialized = true;
 
         swapRouter = ISwapRouter(_swapRouter);
@@ -39,21 +44,21 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
 
         if (IUniswapV3Pool(uniV3PoolAddress).token1() == USDC) {
             assetTokenAddress = IUniswapV3Pool(uniV3PoolAddress).token0();
-        } else {
+        } else if (IUniswapV3Pool(uniV3PoolAddress).token0() == USDC) {
             assetTokenAddress = IUniswapV3Pool(uniV3PoolAddress).token1();
+        } else {
+            revert("USDC not in pool");
         }
 
         priceHistory = _priceHistory;
         mostRecentPriceUpdateTime = block.timestamp;
         updateSharpe();
-
-        require(IUniswapV3Pool(uniV3PoolAddress).token1() == USDC, "Pool must have USDC as token1");
     }
 
     // Functions
     /// @notice Writes the most recent price to the price history array and updates the Sharpe ratio
     /// @dev This function can only be called once per day
-    function writeMostRecentPrice() public {
+    function writeMostRecentPrice() public onlyInitialized {
         // Ensure the function can only be called once per day
         require(block.timestamp - mostRecentPriceUpdateTime > 86400, "Price can only be updated once a day");
 
@@ -77,7 +82,7 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
 
     /// @notice Updates the Sharpe ratio based on the price history
     /// @dev The Sharpe ratio is calculated using the daily returns of the asset and a daily risk-free rate
-    function updateSharpe() public {
+    function updateSharpe() public onlyInitialized {
         // require(initialized, "Contract not initialized");
 
         // Calculate the daily returns
@@ -131,7 +136,7 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
     /// @dev The calling address must approve this contract to spend at least `amountIn` worth of its USDC for this function to succeed.
     /// @param amountIn The exact amount of USDC that will be swapped for Asset.
     /// @return amountOut The amount of Asset received.
-    function swap(uint256 amountIn, bool usingUSDC) external returns (uint256 amountOut){
+    function swap(uint256 amountIn, bool usingUSDC) external onlyInitialized returns (uint256 amountOut){
 
         address TOKEN_IN;
         address TOKEN_OUT;
@@ -164,7 +169,7 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
 
     /// @notice returns the avg tick over the last hour, always in USD
     /// @dev Conversion to USD is done via the token1IsUSDC bool
-    function getPrice() public view returns (int56) {
+    function getPrice() public view onlyInitialized returns (int56) {
         //Instantiate the pool
         IUniswapV3Pool uniV3Pool = IUniswapV3Pool(uniV3PoolAddress);
 
@@ -187,7 +192,7 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
     }
 
     // Getters
-    function getUniPoolInfo() public view returns (int56, address, address, address, uint24, int24, uint128) {
+    function getUniPoolInfo() public view onlyInitialized returns (int56, address, address, address, uint24, int24, uint128) {
         IUniswapV3Pool uniV3Pool = IUniswapV3Pool(uniV3PoolAddress);
 
         int56 averageTick = getPrice();
@@ -199,7 +204,7 @@ contract Asset is IAsset, IUniswapV3SwapCallback {
         int256 amount0Delta,
         int256 amount1Delta,
         bytes calldata data
-    ) external override {
+    ) external override onlyInitialized {
         // Ensure the callback is coming from the correct pool
         require(msg.sender == uniV3PoolAddress, "Unauthorized callback");
         // Handle the swap amounts
